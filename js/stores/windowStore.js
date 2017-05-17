@@ -15,7 +15,6 @@ const ipc = require('electron').ipcRenderer
 const messages = require('../constants/messages')
 const debounce = require('../lib/debounce')
 const getSetting = require('../settings').getSetting
-const UrlUtil = require('../lib/urlutil')
 const {getCurrentWindowId, isFocused} = require('../../app/renderer/currentWindow')
 const {l10nErrorText} = require('../../app/common/lib/httpUtil')
 const { makeImmutable } = require('../../app/common/state/immutableUtil')
@@ -125,20 +124,7 @@ const newFrame = (state, frameOpts, openInForeground, insertionIndex, nextKey) =
   }
 
   // evaluate the location
-  frameOpts.location = frameOpts.location || newFrameUrl()
-  if (frameOpts.location && UrlUtil.isURL(frameOpts.location)) {
-    frameOpts.location = UrlUtil.getUrlFromInput(frameOpts.location)
-  } else {
-    // location is a search
-    const defaultURL = windowStore.getState().getIn(['searchDetail', 'searchURL'])
-    if (defaultURL) {
-      frameOpts.location = defaultURL
-        .replace('{searchTerms}', encodeURIComponent(frameOpts.location))
-    } else {
-      // Bad URLs passed here can actually crash the browser
-      frameOpts.location = ''
-    }
-  }
+  frameOpts.location = frameOpts.location === undefined ? newFrameUrl() : frameOpts.location
 
   // TODO: longer term get rid of parentFrameKey completely instead of
   // calculating it here.

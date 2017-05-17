@@ -5,9 +5,8 @@
 'use strict'
 
 const windowConstants = require('../../../js/constants/windowConstants')
-const {aboutUrls, isNavigatableAboutPage, isSourceAboutUrl, isUrl, getSourceAboutUrl, getSourceMagnetUrl} = require('../../../js/lib/appUrlUtil')
-const {isURL, isPotentialPhishingUrl, getUrlFromInput} = require('../../../js/lib/urlutil')
-const {getFrameByKey, getFrameKeyByTabId, activeFrameStatePath, frameStatePath, getActiveFrame, getFrameByTabId} = require('../../../js/state/frameStateUtil')
+const {aboutUrls, isNavigatableAboutPage, isSourceAboutUrl, isUrl} = require('../../../js/lib/appUrlUtil')
+const {getFrameKeyByTabId, activeFrameStatePath, frameStatePath, getActiveFrame, getFrameByTabId} = require('../../../js/state/frameStateUtil')
 const getSetting = require('../../../js/settings').getSetting
 const {isBookmark, isDefaultEntry, isHistoryEntry} = require('../../../js/state/siteUtil')
 const fetchSearchSuggestions = require('../fetchSearchSuggestions')
@@ -20,6 +19,7 @@ const suggestion = require('../lib/suggestion')
 const suggestionTypes = require('../../../js/constants/suggestionTypes')
 const {navigateSiteClickHandler, frameClickHandler} = require('../suggestionClickHandlers')
 const appStoreRenderer = require('../../../js/stores/appStoreRenderer')
+const tabActions = require('../../browser/actions/tabActions')
 
 const navigationBarState = require('../../common/state/navigationBarState')
 const tabState = require('../../common/state/tabState')
@@ -322,40 +322,11 @@ const generateNewSuggestionsList = (state) => {
   return setUrlSuggestions(state, suggestionsList)
 }
 
-const getLocation = (location) => {
-  location = location.trim()
-  location = getSourceAboutUrl(location) ||
-    getSourceMagnetUrl(location) ||
-    location
-
-  if (isURL(location)) {
-    location = getUrlFromInput(location)
-  }
-
-  return location
-}
-
 const updateNavBarInput = (state, loc, framePath) => {
   if (framePath === undefined) {
     framePath = activeFrameStatePath(state)
   }
   state = state.setIn(framePath.concat(['navbar', 'urlbar', 'location']), loc)
-  return state
-}
-
-const navigationAborted = (state, action) => {
-  const frame = getFrameByTabId(state, action.tabId)
-  if (frame) {
-    let location = action.location || frame.get('provisionalLocation')
-    if (location) {
-      const framePath = frameStatePath(state, frame.get('key'))
-      location = getLocation(location)
-      state = updateNavBarInput(state, location, framePath)
-      state = state.mergeIn(framePath, {
-        location
-      })
-    }
-  }
   return state
 }
 
@@ -385,69 +356,37 @@ const setActive = (state, isActive) => {
 }
 
 const urlBarReducer = (state, action) => {
-  const tabId = state.getIn(activeFrameStatePath(state).concat(['tabId']), tabState.TAB_ID_NONE)
+  const activeTabId = state.getIn(activeFrameStatePath(state).concat(['tabId']), tabState.TAB_ID_NONE)
 
   switch (action.actionType) {
     case windowConstants.WINDOW_SET_NAVBAR_INPUT:
       state = setNavBarUserInput(state, action.location)
       break
-    case windowConstants.WINDOW_SET_NAVIGATED:
-      // For about: URLs, make sure we store the URL as about:something
-      // and not what we map to.
-      action.location = getLocation(action.location)
+    // TODO(bridiver) - this is a workaround until we can migrate frame data to tabs
+    case tabActions.didFinishNavigation.name:
+      const tabId = action.tabId
+      const navigationState = action.navigationState
 
-      const key = action.key || state.get('activeFrameKey')
-      state = state.mergeIn(frameStatePath(state, key), {
-        location: action.location
-      })
-      if (!action.isNavigatedInPage) {
-        state = state.mergeIn(frameStatePath(state, key), {
-          adblock: {},
-          audioPlaybackActive: false,
-          computedThemeColor: undefined,
-          httpsEverywhere: {},
-          icon: undefined,
-          location: action.location,
-          noScript: {},
-          themeColor: undefined,
-          title: '',
-          trackingProtection: {},
-          fingerprintingProtection: {}
-        })
+      const displayURL = navigationState.getIn(['visibleEntry', 'virtualURL'])
+      const frame = getFrameByTabId(state, tabId)
+      if (frame) {
+        state = updateNavBarInput(state, displayURL, frameStatePath(state, frame.get('key')))
+        state = state.setIn(frameStatePath(state, frame.get('key')).concat(['navbar', 'urlbar', 'suggestions', 'shouldRender']), false)
       }
-
-      // Update nav bar unless when spawning a new tab. The user might have
-      // typed in the URL bar while we were navigating -- we should preserve it.
-      if (!(action.location === 'about:newtab' && !getActiveFrame(state).get('canGoForward'))) {
-        const key = action.key || state.get('activeFrameKey')
-        state = updateNavBarInput(state, action.location, frameStatePath(state, key))
-      }
-
-      // For potential phishing pages, show a warning
-      if (isPotentialPhishingUrl(action.location)) {
-        state = state.setIn(['ui', 'siteInfo', 'isVisible'], true)
-      }
-
-      state = state.setIn(frameStatePath(state, key).concat(['navbar', 'urlbar', 'suggestions', 'shouldRender']), false)
-      const frame = getFrameByKey(state, key)
-      state = updateSearchEngineInfoFromInput(state, frame)
-      break
-    case windowConstants.WINDOW_SET_NAVIGATION_ABORTED:
-      state = navigationAborted(state, action)
       break
     case windowConstants.WINDOW_URL_BAR_ON_FOCUS:
-      state = navigationBarState.setFocused(state, tabId, true)
-      state = navigationBarState.setSelected(state, tabId, true)
+      state = navigationBarState.setFocused(state, activeTabId, true)
+      state = navigationBarState.setSelected(state, activeTabId, true)
       break
     case windowConstants.WINDOW_URL_BAR_ON_BLUR:
       state = setNavBarUserInput(state, action.targetValue)
       if (!action.fromSuggestion && action.locationValue.length > 0) {
-        const locationValueSuffix = navigationBarState.locationValueSuffix(state, tabId)
+        const locationValueSuffix = navigationBarState.locationValueSuffix(state, activeTabId)
         setNavBarUserInput(state, action.locationValue + locationValueSuffix)
       }
       break
     case windowConstants.WINDOW_TAB_ON_FOCUS:
-      state = navigationBarState.setFocused(state, tabId, false)
+      state = navigationBarState.setFocused(state, activeTabId, false)
       state = setActive(state, false)
       break
     case windowConstants.WINDOW_SET_URL_BAR_SELECTED:
