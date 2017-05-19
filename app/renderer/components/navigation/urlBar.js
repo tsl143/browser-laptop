@@ -389,11 +389,15 @@ class UrlBar extends React.Component {
         // Each tab has a focused state stored separately
         if (this.props.isFocused) {
           this.focus()
+          this.select()
         }
         windowActions.setRenderUrlBarSuggestions(false)
       } else if (this.props.location !== prevProps.location) {
         // This is a url nav change
-        this.setValue(UrlUtil.getDisplayLocation(this.props.location, pdfjsEnabled))
+        // If newtab don't reset the URL because user is probably typing
+        if (!(prevProps.location === 'about:blank' && this.props.location === 'about:newtab')) {
+          this.setValue(UrlUtil.getDisplayLocation(this.props.location, pdfjsEnabled))
+        }
       } else if (this.props.hasSuggestionMatch &&
                 this.props.isActive &&
                 this.props.locationValueSuffix !== this.lastSuffix) {
